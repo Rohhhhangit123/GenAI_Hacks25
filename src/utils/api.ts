@@ -1,6 +1,16 @@
 import { ApiResponse, AnalysisResult } from '../types';
 
-const API_BASE_URL = '/api';  // proxy path
+// Environment-aware API configuration
+const getApiUrl = (): string => {
+  // Check if we're in production (Vite sets import.meta.env.PROD)
+  if (import.meta.env.PROD) {
+    // Direct API URL for production (Vercel deployment)
+    return 'https://credscore-355089345579.europe-west1.run.app';
+  }
+  
+  // Development: use proxy path
+  return '/api';
+};
 
 function withTimeout(ms: number) {
   const controller = new AbortController();
@@ -111,12 +121,19 @@ export async function analyzeContent(content: string): Promise<AnalysisResult> {
     throw new Error('Invalid content provided for analysis');
   }
 
+  // Get environment-specific API URL
+  const apiUrl = getApiUrl();
+  
+  // Debug logging
+  console.log('🌍 Environment:', import.meta.env.MODE);
+  console.log('🏗️ Is Production:', import.meta.env.PROD);
+  console.log('🔗 API URL:', apiUrl);
+  console.log('📝 Analyzing content:', content.substring(0, 100) + '...');
+
   const { signal, cancel } = withTimeout(20000);
   
   try {
-    console.log('Analyzing content:', content.substring(0, 100) + '...');
-    
-    const response = await fetch(API_BASE_URL, {
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -126,19 +143,38 @@ export async function analyzeContent(content: string): Promise<AnalysisResult> {
       signal
     });
 
+    console.log('📨 Response status:', response.status);
+    console.log('📨 Response headers:', Object.fromEntries(response.headers.entries()));
+
     // Handle different HTTP error statuses
     if (!response.ok) {
-      console.error(`API request failed with status ${response.status}`);
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error(`❌ API request failed with status ${response.status}:`, errorText);
       
       // Specific error handling
       switch (response.status) {
         case 429:
           throw new Error('Rate limit exceeded. Please try again in a moment.');
+        case 400:
+          throw new Error('Invalid request. Please check your input and try again.');
+        case 401:
+          throw new Error('Authentication failed. Please check your API credentials.');
+        case 403:
+          throw new Error('Access forbidden. Please verify your permissions.');
+        case 404:
+          console.warn('API endpoint not found, using fallback analysis');
+          return createFallbackResult();
         case 500:
           console.warn('Server error, using fallback analysis');
           return createFallbackResult();
+        case 502:
+          console.warn('Bad gateway, using fallback analysis');
+          return createFallbackResult();
         case 503:
           console.warn('Service unavailable, using fallback analysis');
+          return createFallbackResult();
+        case 504:
+          console.warn('Gateway timeout, using fallback analysis');
           return createFallbackResult();
         default:
           console.warn(`API error ${response.status}, using fallback analysis`);
@@ -150,33 +186,54 @@ export async function analyzeContent(content: string): Promise<AnalysisResult> {
     let data: any;
     try {
       data = await response.json();
-      console.log('Raw API Response:', data);
+      console.log('✅ Raw API Response:', data);
     } catch (parseError) {
-      console.error('Failed to parse API response:', parseError);
+      console.error('❌ Failed to parse API response:', parseError);
       return createFallbackResult();
     }
 
     // Validate and normalize response
     const validation = validateApiResponse(data);
     if (!validation.isValid || !validation.normalizedData) {
-      console.warn('Invalid API response structure, using fallback');
+      console.warn('⚠️ Invalid API response structure, using fallback');
       return createFallbackResult();
     }
 
-    console.log('Successfully processed API response');
+    console.log('✅ Successfully processed API response');
     return validation.normalizedData;
 
   } catch (error) {
-    console.error('API Error:', error);
+    console.error('🚨 API Error:', error);
 
     // Handle specific error types
     if (error instanceof TypeError && error.message.includes('fetch')) {
-      console.warn('Network error, using fallback analysis');
+      console.warn('🌐 Network error, using fallback analysis');
       return createFallbackResult();
     }
     
     if (error instanceof Error && error.name === 'AbortError') {
-      console.warn('Request timeout, using fallback analysis');
+      console.warn('⏱️ Request timeout, using fallback analysis');
+      return createFallbackResult();
+    }
+
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      console.warn('⏱️ Request aborted, using fallback analysis');
+      return createFallbackResult();
+    }
+
+    // CORS errors
+    if (error instanceof TypeError && error.message.includes('CORS')) {
+      console.warn('🚫 CORS error, using fallback analysis');
+      return createFallbackResult();
+    }
+
+    // Network connectivity issues
+    if (error instanceof TypeError && (
+      error.message.includes('NetworkError') ||
+      error.message.includes('Failed to fetch') ||
+      error.message.includes('Load failed')
+    )) {
+      console.warn('📡 Network connectivity issue, using fallback analysis');
       return createFallbackResult();
     }
 
@@ -189,8 +246,16 @@ export async function analyzeContent(content: string): Promise<AnalysisResult> {
       throw error;
     }
 
+    if (error instanceof Error && (
+      error.message.includes('Invalid request') ||
+      error.message.includes('Authentication failed') ||
+      error.message.includes('Access forbidden')
+    )) {
+      throw error;
+    }
+
     // For all other errors, use fallback
-    console.warn('Unexpected error, using fallback analysis:', error);
+    console.warn('🔄 Unexpected error, using fallback analysis:', error);
     return createFallbackResult();
     
   } finally {
@@ -233,6 +298,11 @@ export async function extractTextFromImage(file: File): Promise<string> {
             'Expert analysis indicates potential implications for future policy decisions.',
             'Social media post claims unusual event occurred without verification.',
             'Advertisement promotes product with questionable health benefits.',
+            'Government announces new policy changes affecting citizens nationwide.',
+            'Celebrity endorsement raises questions about product authenticity.',
+            'Scientific breakthrough promises revolutionary medical treatment.',
+            'Local community responds to controversial municipal decision.',
+            'Weather alert warns of potential severe conditions ahead.'
           ];
           
           const randomText = sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
@@ -257,4 +327,17 @@ export function getErrorMessage(error: unknown): string {
     return error.message;
   }
   return 'An unexpected error occurred. Please try again.';
+}
+
+// Utility function to get current environment info (for debugging)
+export function getEnvironmentInfo(): { 
+  mode: string; 
+  isProd: boolean; 
+  apiUrl: string; 
+} {
+  return {
+    mode: import.meta.env.MODE,
+    isProd: import.meta.env.PROD,
+    apiUrl: getApiUrl()
+  };
 }
