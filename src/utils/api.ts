@@ -30,9 +30,7 @@ function generateFallbackRedFlags(): string[] {
     "Content requires manual verification from trusted sources",
     "Some claims could not be automatically fact-checked",
     "Unable to verify all statements in the content",
-    "Consider cross-referencing with additional sources",
-    "CORS policy prevented direct API access - using offline analysis",
-    "Backend service temporarily unavailable - estimated credibility provided"
+    "Consider cross-referencing with additional sources"
   ];
   
   // Return 2-3 random flags
@@ -132,26 +130,17 @@ export async function analyzeContent(content: string): Promise<AnalysisResult> {
   console.log('🔗 API URL:', apiUrl);
   console.log('📝 Analyzing content:', content.substring(0, 100) + '...');
 
-  const { signal, cancel } = withTimeout(15000); // Reduced timeout for faster fallback
+  const { signal, cancel } = withTimeout(20000);
   
   try {
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        // Additional headers to try bypassing CORS
-        'Origin': import.meta.env.PROD ? 'https://gen-ai-hacks25.vercel.app' : 'http://localhost:5173',
-        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
       },
       body: JSON.stringify({ content: content.trim() }),
-      signal,
-      // Explicitly set CORS mode
-      mode: 'cors',
-      // Add credentials if needed
-      credentials: 'omit',
-      // Add cache control
-      cache: 'no-cache',
+      signal
     });
 
     console.log('📨 Response status:', response.status);
@@ -173,22 +162,22 @@ export async function analyzeContent(content: string): Promise<AnalysisResult> {
         case 403:
           throw new Error('Access forbidden. Please verify your permissions.');
         case 404:
-          console.warn('🔍 API endpoint not found, using fallback analysis');
+          console.warn('API endpoint not found, using fallback analysis');
           return createFallbackResult();
         case 500:
-          console.warn('🖥️ Server error, using fallback analysis');
+          console.warn('Server error, using fallback analysis');
           return createFallbackResult();
         case 502:
-          console.warn('🌐 Bad gateway, using fallback analysis');
+          console.warn('Bad gateway, using fallback analysis');
           return createFallbackResult();
         case 503:
-          console.warn('⚠️ Service unavailable, using fallback analysis');
+          console.warn('Service unavailable, using fallback analysis');
           return createFallbackResult();
         case 504:
-          console.warn('⏰ Gateway timeout, using fallback analysis');
+          console.warn('Gateway timeout, using fallback analysis');
           return createFallbackResult();
         default:
-          console.warn(`❌ API error ${response.status}, using fallback analysis`);
+          console.warn(`API error ${response.status}, using fallback analysis`);
           return createFallbackResult();
       }
     }
@@ -216,19 +205,12 @@ export async function analyzeContent(content: string): Promise<AnalysisResult> {
   } catch (error) {
     console.error('🚨 API Error:', error);
 
-    // Enhanced CORS error detection
-    if (error instanceof TypeError && (
-      error.message.includes('Failed to fetch') ||
-      error.message.includes('NetworkError') ||
-      error.message.includes('CORS') ||
-      error.message.includes('blocked') ||
-      error.message.includes('Load failed')
-    )) {
-      console.warn('🚫 CORS policy blocking request, using fallback analysis');
+    // Handle specific error types
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      console.warn('🌐 Network error, using fallback analysis');
       return createFallbackResult();
     }
     
-    // Timeout errors
     if (error instanceof Error && error.name === 'AbortError') {
       console.warn('⏱️ Request timeout, using fallback analysis');
       return createFallbackResult();
@@ -239,24 +221,19 @@ export async function analyzeContent(content: string): Promise<AnalysisResult> {
       return createFallbackResult();
     }
 
-    // Network connectivity issues
-    if (error instanceof TypeError && (
-      error.message.includes('NetworkError') ||
-      error.message.includes('net::ERR_FAILED') ||
-      error.message.includes('ERR_NETWORK') ||
-      error.message.includes('ERR_INTERNET_DISCONNECTED')
-    )) {
-      console.warn('📡 Network connectivity issue, using fallback analysis');
+    // CORS errors
+    if (error instanceof TypeError && error.message.includes('CORS')) {
+      console.warn('🚫 CORS error, using fallback analysis');
       return createFallbackResult();
     }
 
-    // Security and permission errors
-    if (error instanceof Error && (
-      error.message.includes('ERR_BLOCKED_BY_CLIENT') ||
-      error.message.includes('ERR_BLOCKED_BY_XSS_AUDITOR') ||
-      error.message.includes('ERR_UNSAFE_REDIRECT')
+    // Network connectivity issues
+    if (error instanceof TypeError && (
+      error.message.includes('NetworkError') ||
+      error.message.includes('Failed to fetch') ||
+      error.message.includes('Load failed')
     )) {
-      console.warn('🛡️ Security policy blocking request, using fallback analysis');
+      console.warn('📡 Network connectivity issue, using fallback analysis');
       return createFallbackResult();
     }
 
@@ -325,12 +302,7 @@ export async function extractTextFromImage(file: File): Promise<string> {
             'Celebrity endorsement raises questions about product authenticity.',
             'Scientific breakthrough promises revolutionary medical treatment.',
             'Local community responds to controversial municipal decision.',
-            'Weather alert warns of potential severe conditions ahead.',
-            'Financial advisor recommends investment strategy with guaranteed returns.',
-            'Health supplement claims miraculous weight loss results.',
-            'Political candidate makes promises about economic reform.',
-            'Technology company announces revolutionary breakthrough.',
-            'Environmental study reveals concerning pollution levels.'
+            'Weather alert warns of potential severe conditions ahead.'
           ];
           
           const randomText = sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
@@ -368,41 +340,4 @@ export function getEnvironmentInfo(): {
     isProd: import.meta.env.PROD,
     apiUrl: getApiUrl()
   };
-}
-
-// Utility function to test API connectivity
-export async function testApiConnectivity(): Promise<{ 
-  success: boolean; 
-  error?: string; 
-  details: any 
-}> {
-  const apiUrl = getApiUrl();
-  
-  try {
-    const response = await fetch(apiUrl, {
-      method: 'OPTIONS', // Use OPTIONS to test CORS
-      headers: {
-        'Origin': import.meta.env.PROD ? 'https://gen-ai-hacks25.vercel.app' : 'http://localhost:5173',
-      },
-      mode: 'cors',
-    });
-
-    return {
-      success: response.ok,
-      details: {
-        status: response.status,
-        headers: Object.fromEntries(response.headers.entries()),
-        url: apiUrl
-      }
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      details: {
-        url: apiUrl,
-        environment: import.meta.env.MODE
-      }
-    };
-  }
 }
