@@ -1,6 +1,6 @@
 import { ApiResponse, AnalysisResult } from '../types';
 
-const API_BASE_URL = '/api';  // proxy path
+const API_BASE_URL = '/api';  
 
 function withTimeout(ms: number) {
   const controller = new AbortController();
